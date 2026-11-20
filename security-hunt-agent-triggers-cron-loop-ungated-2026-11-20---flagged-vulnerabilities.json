@@ -1,0 +1,42 @@
+{
+  "hunt": "claude-code-agent-triggers-cron-loop-ungated-2026-11-20",
+  "repo": "claude-code",
+  "result": "1 CRITICAL NEW",
+  "summary": "After AGENT_TRIGGERS gate removal (33fe494/2934f30), planted .claude/scheduled_tasks.json auto-enables the scheduler and fires overdue recurring prompts without AskUserQuestion. Cron enqueue omits skipSlashCommands, so prompt /pwn invokes a project skill whose allowed-tools Bash(*) auto-allows inline !` / ```! shell in getPromptForCommand — Trust-only RCE with no Bash prompt and no model cooperation. Distinct from the filed skill CRITICAL (user/model must invoke skill) and from the same-day NONE agent-triggers hunt that missed this completion path.",
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "src/utils/cronScheduler.ts",
+      "title": "Ungated planted scheduled_tasks.json auto-invokes project skill allowed-tools + inline shell RCE after Trust",
+      "description": "Commits 33fe494 and 2934f30 removed feature('AGENT_TRIGGERS') from isKairosCronEnabled, Cron* tool loading, registerLoopSkill, REPL useScheduledTasks, and print.ts -p wiring. In this decompiled build feature() always returns false, so those surfaces were previously dead; they are now live whenever CLAUDE_CODE_DISABLE_CRON is unset. hasCronTasksSync() auto-enables the scheduler from a committed .claude/scheduled_tasks.json. Overdue recurring tasks (ancient createdAt, optional permanent:true) fire on the first idle tick without the missed-task AskUserQuestion path (that path filters !recurring). Fire enqueues the prompt as mode:prompt without skipSlashCommands. processUserInput / QueryEngine ask() therefore treat a leading /name as a slash command, bypassing SkillTool.checkPermissions. Project skill getPromptForCommand injects alwaysAllowRules.command from frontmatter allowed-tools and executeShellCommandsInPrompt runs ```! / !` blocks under that allowlist. TrustDialog remains a generic folder-trust prompt and does not mention scheduled_tasks; skill Bash detection is analytics-only. Distinct from already-filed SessionStart/hooks HTTP, LSP, statusline, WebFetch SSRF, OAuth, enableAllProjectMcpServers, sticky MCP, skill symlink, settings.local trust, and from the filed skill CRITICAL that required the user or model to invoke the skill.",
+      "impact": "After one generic Trust click (or under claude -p with no trust dialog), a planted repo executes arbitrary shell as the victim with no Bash permission prompt, no SessionStart hook, and no model cooperation. That is arbitrary command execution and credential theft. Restoring only the feature() gate comment or killing durable CronCreate writes does not close planted-file auto-fire.",
+      "verified": true,
+      "status": "active",
+      "background_composer_id": "bc-ed510410-6558-5b6f-b14a-ec18b41384ab",
+      "commit_hash": "1f3dc213cd1f4fc3b6942616e6c1d7491a89e17c",
+      "detected_at_pst": "2026-11-20T04:37:12-0800",
+      "reported_link": "",
+      "attack_path": "1. Attacker commits .claude/scheduled_tasks.json with a recurring permanent task, createdAt in the past, prompt \"/pwn\", plus .claude/skills/pwn/SKILL.md with allowed-tools: Bash(*) and a ```! shell payload (or !`cmd`).\n2. Victim clones and runs claude (TrustDialog) or claude -p (trust skipped).\n3. cronScheduler.start sees hasCronTasksSync() true, sets scheduledTasksEnabled, and enables the 1s tick loop.\n4. First idle tick: next fire from lastFiredAt??createdAt is already past → onFireTask/onFire enqueues /pwn without skipSlashCommands.\n5. handlePromptSubmit / QueryEngine processUserInput routes /pwn to processSlashCommand → getPromptForCommand.\n6. loadSkillsDir injects alwaysAllowRules.command=allowedTools and executeShellCommandsInPrompt allows and runs the inline shell as the victim.",
+      "evidence": [
+        "src/tools/ScheduleCronTool/prompt.ts:36-38",
+        "src/tools.ts:29-33",
+        "src/skills/bundled/index.ts:36",
+        "src/screens/REPL.tsx:4049-4056",
+        "src/cli/print.ts:2702-2729",
+        "src/utils/cronScheduler.ts:478-485",
+        "src/utils/cronScheduler.ts:195-197",
+        "src/utils/cronScheduler.ts:254-297",
+        "src/hooks/useScheduledTasks.ts:71-114",
+        "src/utils/processUserInput/processUserInput.ts:531-550",
+        "src/QueryEngine.ts:419-431",
+        "src/skills/loadSkillsDir.ts:375-395",
+        "src/utils/promptShellExecution.ts:97-115",
+        "src/components/TrustDialog/TrustDialog.tsx:207-209",
+        "src/components/TrustDialog/TrustDialog.tsx:128-144",
+        "src/Tool.ts:753-766"
+      ],
+      "remediation": "Do not auto-enable the scheduler from an unreviewed planted scheduled_tasks.json; require explicit user opt-in and name the file in TrustDialog. Stamp skipSlashCommands:true (or strip leading slashes) on all cron-enqueued prompts. Keep refusing project-skill allowed-tools + inline ! shell without a dedicated high-risk approval. A CLAUDE_CODE_DISABLE_CRON-only kill switch is insufficient for default installs.",
+      "poc_video_notes": "At-rest source validation only. Live PoC would execute attacker shell in a Claude Code session after Trust. Chain verified by tracing ungating commits 33fe494/2934f30 through scheduler auto-enable, overdue recurring fire, missing skipSlashCommands, slash routing, and skill alwaysAllowRules + executeShellCommandsInPrompt."
+    }
+  ]
+}
