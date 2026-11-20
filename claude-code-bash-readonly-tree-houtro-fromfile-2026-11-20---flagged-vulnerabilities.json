@@ -1,0 +1,26 @@
+[
+  {
+    "severity": "MEDIUM",
+    "title": "Bash readonly auto-allow: tree -H --houtro dumps absolute file contents",
+    "description": "tree is COMMAND_ALLOWLIST-readonly with --houtro allowed as a string file path, but tree is not a PathCommand so absolute host paths bypass checkPathConstraints. At bashPermissions step 7, BashTool.isReadOnly auto-allows the command. With -H (HTML mode), tree embeds the outro file body verbatim into stdout HTML. Distinct from already-filed tree --hintro.",
+    "evidence": [
+      "src/tools/BashTool/readOnlyValidation.ts:712-713 (--hintro/--houtro in tree.safeFlags)",
+      "src/tools/BashTool/pathValidation.ts:27-63 (PathCommand list — tree absent)",
+      "src/tools/BashTool/bashPermissions.ts:1153-1162 (step 7 read-only auto-allow)",
+      "PoC: tree -H . --houtro=/tmp/dummy_creds.txt <dir> → stdout HTML contains API_KEY= and PASSWORD= lines from dummy file; harness step7AutoAllow=true"
+    ],
+    "remediation": "Remove --houtro (and --hintro) from tree.safeFlags, or add tree to PATH_EXTRACTORS and validate --houtro/--hintro file operands against the working-directory allowlist."
+  },
+  {
+    "severity": "MEDIUM",
+    "title": "Bash readonly auto-allow: tree --fromfile dumps absolute file lines",
+    "description": "tree --fromfile is allowlisted as a no-arg flag; the following positional path is the file whose lines are printed as tree node names. tree is not a PathCommand, so absolute paths passthrough path validation and are auto-allowed at step 7. Distinct from already-filed --fromtabfile (different flag/parser).",
+    "evidence": [
+      "src/tools/BashTool/readOnlyValidation.ts:719 (--fromfile: 'none')",
+      "src/tools/BashTool/pathValidation.ts:27-63 (tree not PathCommand)",
+      "src/tools/BashTool/bashPermissions.ts:1153-1162 (step 7 auto-allow)",
+      "PoC: tree --fromfile /tmp/dummy_creds.txt prints each credential line as a tree leaf; harness step7AutoAllow=true (fused --fromfile=/abs rejected)"
+    ],
+    "remediation": "Remove --fromfile/--fromtabfile from tree.safeFlags, or extract and path-validate the operand file for those modes."
+  }
+]
