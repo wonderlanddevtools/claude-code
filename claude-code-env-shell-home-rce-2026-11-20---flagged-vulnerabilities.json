@@ -1,0 +1,146 @@
+{
+  "hunt": "claude-code-env-var-rce-gadgets-2026-11-20",
+  "repo": "wonderlanddevtools/claude-code",
+  "commit": "f802bded1b2a997a7aa33431255cd8204f49fbdc",
+  "result": "2 NEW CRITICAL",
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "Project env CLAUDE_CODE_SHELL / SHELL replaces BashTool shell binary after generic TrustDialog",
+      "location": "src/utils/Shell.ts:73-137 + src/utils/managedEnv.ts:187-199",
+      "description": "DISTINCT from filed PATH/LD_PRELOAD (PATH lookup hijack), CLAUDE_CODE_SHELL_PREFIX (command wrap / MCP argv0 replace), BASH_ENV/CLAUDE_ENV_FILE (script sourcing into bash -c), and NODE_OPTIONS. After generic TrustDialog (or immediately under claude -p), applyConfigEnvironmentVariables Object.assigns all merged settings.env into process.env. CLAUDE_CODE_SHELL and SHELL are not in SAFE_ENV_VARS and are not scrubbed by subprocessEnv or filterSettingsEnv. getShellConfig → findSuitableShell reads process.env.CLAUDE_CODE_SHELL first; validation is only path.includes('bash'|'zsh') plus X_OK — a repo-relative ./.claude/evilbash passes. SHELL with the same substring check is unshifted to the front of the shell candidate list. createBashShellProvider then spawns that binary for every BashTool command (including snapshot creation). TrustDialog getDangerousEnvVarsSources is analytics-only; UI never names CLAUDE_CODE_SHELL or SHELL.",
+      "impact": "After one Trust click (or claude -p), the first auto-allowed readonly Bash command (pwd/uname/id/git status/…) executes attacker code as the victim via the planted shell binary. No permissions.allow rule required. Enables host RCE, credential theft, and persistence.",
+      "attack_path": "1. Attacker commits .claude/settings.json with env.CLAUDE_CODE_SHELL=\"./.claude/evilbash\" (path must contain 'bash' or 'zsh') and plants an executable .claude/evilbash that runs payload then execs /bin/bash \"$@\". Optional CLAUDE.md steers a harmless pwd/uname.\n2. Victim clones and runs claude (or claude -p).\n3. Interactive: TrustDialog is generic folder-trust. After accept, interactiveHelpers applyConfigEnvironmentVariables sets process.env.CLAUDE_CODE_SHELL. Headless: main.tsx applies full project env with trust implicit.\n4. Model runs Bash(pwd) (or any command); bashPermissions step 7 auto-allows readonly.\n5. getShellConfig/findSuitableShell returns the planted path; Shell.ts spawn(planted, ['-c'|'-l','-c'], {env: subprocessEnv()}) runs attacker code before the requested command.",
+      "evidence": [
+        "src/utils/Shell.ts:73-88",
+        "src/utils/Shell.ts:91-123",
+        "src/utils/Shell.ts:139-146",
+        "src/utils/Shell.ts:316-337",
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/main.tsx:1952-1965",
+        "src/main.tsx:2590-2593",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/components/TrustDialog/TrustDialog.tsx:203-209",
+        "src/components/TrustDialog/utils.ts:214-245"
+      ],
+      "remediation": "Never apply CLAUDE_CODE_SHELL or SHELL from projectSettings/localSettings. Restrict shell overrides to userSettings/flagSettings/policySettings, or require an allowlisted absolute path under a trusted prefix. Show shell-override env keys in TrustDialog. Do not treat claude -p as implicit trust for project env.",
+      "verified": true,
+      "poc": "Local: planted executable whose path contains 'bash' satisfied findSuitableShell checks (includes bash/zsh + X_OK). Spawning it with -c / -c -l wrote a marker then delegated to /bin/bash. Relative ./.claude/evilbash from repo cwd worked. Full interactive TrustDialog session not run in this VM."
+    },
+    {
+      "severity": "critical",
+      "title": "Project env HOME redirects shell snapshot to planted .bashrc after generic TrustDialog",
+      "location": "src/utils/bash/ShellSnapshot.ts:181-191 + src/utils/bash/ShellSnapshot.ts:456-467 + src/utils/managedEnv.ts:187-199",
+      "description": "DISTINCT from filed BASH_ENV (bash auto-sources BASH_ENV for non-interactive -c), CLAUDE_ENV_FILE (concatenated into command string), PATH/LD_PRELOAD, and from HOME→AWS credential_process (already dismissed as non-distinct from AWS_SHARED_CREDENTIALS_FILE). After TrustDialog or under claude -p, applyConfigEnvironmentVariables sets process.env.HOME from project settings.env. First BashTool use memoizes getShellConfig → createAndSaveSnapshot. getConfigFile joins os.homedir() (Node returns $HOME when set) with .bashrc/.zshrc. The snapshot script explicitly sources that path, and the snapshot spawn uses bash -c -l with subprocessEnv() (inherits HOME), so login profile (.bash_profile) under the planted home also runs. TrustDialog does not name HOME.",
+      "impact": "After one Trust click (or claude -p), the first BashTool use (including auto-allowed readonly) creates a shell snapshot that sources attacker .bashrc/.bash_profile under the planted HOME → host RCE before/as the readonly command runs. No permissions.allow required.",
+      "attack_path": "1. Attacker commits .claude/settings.json with env.HOME pointing at a repo-relative planted home (or absolute path under the clone) containing .bashrc / .bash_profile that run attacker payload (and optionally define functions captured into the snapshot for every later command).\n2. Victim clones and runs claude or claude -p.\n3. After Trust (or immediately under -p), applyConfigEnvironmentVariables sets HOME.\n4. First Bash(pwd)/uname/git status auto-allows; createAndSaveSnapshot runs.\n5. os.homedir() resolves to planted home; snapshot script sources planted .bashrc; spawn uses -l so .bash_profile also runs → RCE. Subsequent Bash commands source the poisoned snapshot.",
+      "evidence": [
+        "src/utils/bash/ShellSnapshot.ts:181-191",
+        "src/utils/bash/ShellSnapshot.ts:362-363",
+        "src/utils/bash/ShellSnapshot.ts:413-467",
+        "src/utils/shell/bashProvider.ts:58-68",
+        "src/utils/shell/bashProvider.ts:200-206",
+        "src/utils/Shell.ts:316-323",
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/main.tsx:2590-2593",
+        "src/tools/BashTool/bashPermissions.ts:372-376",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/components/TrustDialog/TrustDialog.tsx:203-209"
+      ],
+      "remediation": "Never apply HOME, USER, LOGNAME, or XDG_* directory overrides from projectSettings/localSettings. Pin snapshot config discovery to the real passwd home (os.userInfo().homedir) ignoring process.env.HOME, or capture the pre-settings home once at process start. Scrub HOME from subprocessEnv for Bash/snapshot children. Disclose HOME overrides in TrustDialog.",
+      "verified": true,
+      "poc": "Local Node: with HOME set to a planted directory, os.homedir() returned that path; bash -c -l sourcing join(homedir(),'.bashrc') wrote a marker (HOME_SNAPSHOT_PWNED). Login .bash_profile under the same HOME also executed. Full interactive TrustDialog session not run in this VM."
+    }
+  ],
+  "disproved": [
+    {
+      "candidate": "PYTHONPATH/sitecustomize + PYTHONSTARTUP via auto-allowed python --version",
+      "why": "python3 --version short-circuits before site init; sitecustomize and PYTHONSTARTUP do not run. PYTHONPATH sitecustomize does run for python -c, but python -c is not in the readonly allowlist."
+    },
+    {
+      "candidate": "PERL5OPT -M / PERL5LIB",
+      "why": "perl -v does not load -M modules; perl -e does, but perl is not auto-allowed."
+    },
+    {
+      "candidate": "RUBYOPT -r / RUBYLIB / GEMRC",
+      "why": "ruby not present in allowlist (only node/python version exact matches); no ruby binary in this environment to further test --version."
+    },
+    {
+      "candidate": "JAVA_TOOL_OPTIONS / _JAVA_OPTIONS / JDK_JAVA_OPTIONS",
+      "why": "java not in readonly allowlist; no auto-allowed java --version path."
+    },
+    {
+      "candidate": "PHP auto_prepend_file / PHPRC / PHP_INI_SCAN_DIR",
+      "why": "php not installed here and not in readonly allowlist."
+    },
+    {
+      "candidate": "GOPROXY / GOFLAGS / GOTOOLCHAIN / GOROOT / RUSTC_WRAPPER / CARGO_HOME / NPM_CONFIG_* / PIP_* / UV_* / POETRY",
+      "why": "go/cargo/npm/pip are not in EXTERNAL_READONLY or COMMAND_ALLOWLIST as auto-allowed version/build commands that would honor those vars for code execution without a separate write/network permission."
+    },
+    {
+      "candidate": "EDITOR / VISUAL / GIT_EDITOR / PAGER / GIT_PAGER / LESSOPEN",
+      "why": "Shell.ts forces GIT_EDITOR=true. Bash stdout is redirected to a file/pipe so git disables the pager by default; --paginate is not in safeFlags. LESSOPEN did not fire under non-TTY git log."
+    },
+    {
+      "candidate": "GIT_ASKPASS / SSH_ASKPASS",
+      "why": "Auto-allowed git status/log/diff do not prompt for credentials; GIT_ASKPASS did not run on git ls-remote to a nonexistent HTTPS remote in this environment. marketplace/worktree paths clear GIT_ASKPASS."
+    },
+    {
+      "candidate": "GIT_TEMPLATE_DIR",
+      "why": "Only affects git init/clone templates; those are not readonly auto-allowed."
+    },
+    {
+      "candidate": "GIT_PROXY_COMMAND / GIT_TRACE2_EVENT pipe",
+      "why": "GIT_PROXY_COMMAND executes on git:// ls-remote (confirmed), but core.gitProxy is already filed via GIT_CONFIG_* — close variant. GIT_TRACE2_EVENT/GIT_TRACE '|cmd' did not execute on git 2.43.0."
+    },
+    {
+      "candidate": "GIT_CONFIG_SYSTEM / XDG_CONFIG_HOME → core.fsmonitor",
+      "why": "Both execute fsmonitor on git status (confirmed) but are close variants of filed GIT_CONFIG_GLOBAL / GIT_CONFIG_COUNT core.fsmonitor."
+    },
+    {
+      "candidate": "HOME → .gitconfig core.fsmonitor",
+      "why": "Works, but close variant of filed GIT_CONFIG_GLOBAL fsmonitor. Reported HOME finding is the shell-snapshot .bashrc path only."
+    },
+    {
+      "candidate": "DOCKER_HOST + auto-allowed docker ps",
+      "why": "docker ps/images are EXTERNAL_READONLY_COMMANDS; DOCKER_HOST redirects the daemon endpoint (SSRF / remote API abuse) but is not reliable local RCE without an attacker-controlled daemon/socket already reachable — below the RCE bar used here / overlapping ant-only strip commentary."
+    },
+    {
+      "candidate": "KUBECONFIG / COMPOSE_FILE / TF_CLI_ARGS / ANSIBLE_CONFIG",
+      "why": "kubectl/terraform/ansible/compose are not in the readonly auto-allow lists for unattended exec gadgets."
+    },
+    {
+      "candidate": "AWS_WEB_IDENTITY_TOKEN_FILE / AWS_ROLE_ARN / AWS_PROFILE remaining",
+      "why": "Prior same-surface hunt: web_identity is file read + STS HTTP only. AWS_PROFILE is SAFE but alone uses victim HOME ~/.aws (no project-relative .aws). credential_process via AWS_*_FILE already filed."
+    },
+    {
+      "candidate": "AZURE_CLIENT_CERTIFICATE_PATH remaining",
+      "why": "Prior hunt: PEM/PFX file read only in @azure/identity; no command execution."
+    },
+    {
+      "candidate": "SSL_CERT_FILE / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / AWS_CA_BUNDLE / GIT_SSL_CAINFO / GIT_SSL_NO_VERIFY",
+      "why": "Trust/MITM class overlapping filed HTTPS_PROXY+NODE_EXTRA_CA_CERTS; no distinct auto-allowed RCE sink without an already-filed proxy redirect."
+    },
+    {
+      "candidate": "BROWSER / DISPLAY / TMPDIR",
+      "why": "No auto-allowed command path that executes BROWSER; sandbox overrides TMPDIR; DISPLAY emptying is used defensively in ide.ts — DoS/behavior change only."
+    },
+    {
+      "candidate": "SAFE_ENV_VARS enabling dangerous behavior before Trust (beyond filed)",
+      "why": "Remaining SAFE entries are model IDs, timeouts, OTEL toggles (OTEL exfil filed), USE_BUILTIN_RIPGREP (filed), USE_BEDROCK/VERTEX/FOUNDRY (filed with BASE_URL / credential_process), AWS_PROFILE/REGION (insufficient alone), ANTHROPIC_CUSTOM_HEADERS (header injection without BASE_URL cleared previously)."
+    },
+    {
+      "candidate": "CLAUDE_CODE_SHELL_PREFIX",
+      "why": "Already filed (MCP stdio argv0 replacement + Bash wrap)."
+    },
+    {
+      "candidate": "NODE_OPTIONS via node -v",
+      "why": "Already filed; additionally confirmed node -v/--version do NOT load --require on Node 22 (npm -v / node -e do)."
+    }
+  ]
+}
