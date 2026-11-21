@@ -1,0 +1,125 @@
+{
+  "hunt": "claude-code-acceptEdits-mix-sbt-deploy-2026-11-21",
+  "repo": "wonderlanddevtools/claude-code",
+  "branch": "main",
+  "result": "3 NEW HIGH",
+  "shared_mechanism": {
+    "DANGEROUS_FILES": "src/utils/permissions/filesystem.ts:57-69",
+    "DANGEROUS_DIRECTORIES": "src/utils/permissions/filesystem.ts:74-79",
+    "isDangerousFilePathToAutoEdit": "src/utils/permissions/filesystem.ts:435-488",
+    "checkPathSafetyForAutoEdit": "src/utils/permissions/filesystem.ts:620-665",
+    "acceptEdits_auto_allow": "src/utils/permissions/filesystem.ts:1361-1376",
+    "FileWriteTool": "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+    "FileEditTool": "src/tools/FileEditTool/FileEditTool.ts:125-131",
+    "project_defaultMode": "src/utils/permissions/permissionSetup.ts:743-772"
+  },
+  "already_filed_not_rereported": [
+    "Dockerfile/Compose",
+    "Makefile/flake.nix/shell.nix/lefthook",
+    "CI YAML (.github/workflows) + non-GH CI (Jenkinsfile/gitlab/circle/azure/travis/bitbucket/buildkite/drone)",
+    "package.json postinstall",
+    ".npmrc/.bunfig.toml/.yarnrc.yml/.pnpmfile.cjs",
+    ".cargo/config.toml rustc-wrapper",
+    "JS/Python config-as-code (vite/jest/eslint/conftest)",
+    "Vagrantfile",
+    "Terraform/Terragrunt",
+    "Gemfile/Podfile/Fastfile",
+    "CMakeLists.txt/meson.build",
+    "ansible.cfg/playbooks",
+    "Gradle build.gradle / Maven pom.xml/.mvn/extensions.xml",
+    "setup.py",
+    ".devcontainer/devcontainer.json",
+    ".husky hooks",
+    ".envrc",
+    ".pre-commit-config.yaml / lefthook.yml",
+    "justfile/Taskfile",
+    ".gitpod.yml / .idx/dev.nix / .continue",
+    ".cursor IDE config"
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of mix.exs and Elixir Mix config, planting delayed RCE on the next mix command.",
+      "description": "Under acceptEdits, in-cwd writes auto-allow after checkPathSafetyForAutoEdit. DANGEROUS_FILES is only shell/git/mcp basenames (.gitconfig/.bashrc/.mcp.json/…). DANGEROUS_DIRECTORIES is only .git/.vscode/.idea/.claude. mix.exs, rebar.config, and config/runtime.exs|config.exs|dev.exs are absent. FileWrite/FileEdit of those paths therefore auto-allows. Mix evaluates mix.exs as Elixir on every mix deps.get/compile/test/release, and releases evaluate config/runtime.exs at startup. Distinct from filed Gemfile (Ruby/Bundler), setup.py (Python), and Gradle/pom (JVM). Project settings can set permissions.defaultMode acceptEdits with no BypassPermissionsModeDialog.",
+      "impact": "After generic Trust plus acceptEdits (project-planted or user-selected), the model can silently rewrite mix.exs or Elixir config to run attacker code. The victim's next mix deps.get / mix compile / mix test — or the next release start for runtime.exs — executes as the victim. That is delayed host RCE via the Elixir/Erlang toolchain.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker publishes an Elixir repo (or plants CLAUDE.md instructing a 'fix' of mix.exs / config/dev.exs), optional .claude/settings.json with permissions.defaultMode acceptEdits.\n2. Victim clones, reviews the tree (Mix files look benign), and trusts the folder. TrustDialog is generic; acceptEdits does not show Bypass Permissions.\n3. FileWrite of mix.exs (or config/runtime.exs) passes isDangerousFilePathToAutoEdit and is auto-allowed because the path is inside cwd.\n4. Victim runs mix deps.get / mix compile / mix test (or starts a release). Mix evaluates the rewritten Elixir and runs attacker code.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:652-665",
+        "src/utils/permissions/filesystem.ts:1361-1375",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "src/tools/FileEditTool/FileEditTool.ts:125-131",
+        "src/utils/permissions/permissionSetup.ts:743-772"
+      ],
+      "remediation": "Add mix.exs, rebar.config, and Elixir Mix config basenames (or a BEAM-build deny list covering config/*.exs used as Mix config) to DANGEROUS_FILES so acceptEdits cannot auto-write them. Do not honor defaultMode acceptEdits from projectSettings without disclosing it.",
+      "why_distinct": "Distinct from filed Gemfile (Bundler Ruby), setup.py (Python setuptools), and Gradle/Maven JVM entrypoints. New language ecosystem (Elixir/Mix) never previously filed by name.",
+      "poc_video_notes": "At-rest code trace. Local basename/dir check confirmed mix.exs, config/runtime.exs, config/dev.exs, config/config.exs, and rebar.config are AUTO (not matched by DANGEROUS_FILES or DANGEROUS_DIRECTORIES) while .mcp.json/.bashrc/.git/hooks are ASK. Mix docs: mix.exs is Elixir evaluated by Mix; config/runtime.exs runs on release start. A live acceptEdits FileWrite session was not run."
+    },
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of build.sbt, planting delayed RCE on the next sbt command.",
+      "description": "Under acceptEdits, in-cwd writes auto-allow after checkPathSafetyForAutoEdit. DANGEROUS_FILES/DIRECTORIES omit build.sbt and project/*.sbt / project/*.scala. FileWrite/FileEdit of those Scala Build Tool entrypoints therefore auto-allows. sbt evaluates build.sbt and project/ plugins as Scala on every sbt compile/test/run. Distinct from the filed JVM finding (Gradle Groovy/Kotlin DSL + Maven pom/.mvn/extensions.xml) — sbt is a different build system and language surface. Project settings can set permissions.defaultMode acceptEdits with no BypassPermissionsModeDialog.",
+      "impact": "After generic Trust plus acceptEdits, the model can silently rewrite build.sbt (or project/plugins.sbt). The victim's next sbt compile/test/run evaluates the planted Scala and executes attacker code as the victim.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker publishes a Scala/sbt repo with CLAUDE.md instructing a 'fix' of build.sbt (optional: project permissions.defaultMode acceptEdits).\n2. Victim clones, reviews the tree (build.sbt looks benign), and trusts the folder.\n3. FileWrite of build.sbt is auto-allowed: basename is not in DANGEROUS_FILES; no parent dir is in DANGEROUS_DIRECTORIES.\n4. Victim runs sbt compile/test; sbt evaluates the rewritten Scala → RCE.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:652-665",
+        "src/utils/permissions/filesystem.ts:1361-1375",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "src/tools/FileEditTool/FileEditTool.ts:125-131",
+        "src/utils/permissions/permissionSetup.ts:743-772"
+      ],
+      "remediation": "Add build.sbt, and optionally project/*.sbt / project/*.scala build-definition paths, to DANGEROUS_FILES / equivalent deny lists so acceptEdits cannot auto-write sbt entrypoints. Do not honor defaultMode acceptEdits from projectSettings without disclosing it.",
+      "why_distinct": "Distinct from filed Gradle build.gradle / Maven pom.xml (different build tool and Scala DSL). Never previously filed by name.",
+      "poc_video_notes": "At-rest code trace. Local check confirmed build.sbt and project/plugins.sbt are AUTO. sbt evaluates build definitions as Scala on load. A live acceptEdits FileWrite session was not run."
+    },
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of netlify.toml / vercel.json / wrangler.toml, planting deploy/CLI build-command RCE beyond filed CI YAML.",
+      "description": "Under acceptEdits, in-cwd writes auto-allow after checkPathSafetyForAutoEdit. Filed CI coverage (.github/workflows and non-GitHub CI such as Jenkinsfile/.gitlab-ci.yml/.circleci/azure-pipelines) does not include hosting-platform build configs. DANGEROUS_FILES/DIRECTORIES omit netlify.toml, vercel.json, and wrangler.toml. FileWrite/FileEdit of those paths therefore auto-allows. Netlify reads [build].command / install / edge plugins; Vercel reads buildCommand/installCommand/devCommand; Wrangler reads [build].command — all execute attacker shell on deploy or when the victim runs netlify/vercel/wrangler CLI locally. Project settings can set permissions.defaultMode acceptEdits with no BypassPermissionsModeDialog.",
+      "impact": "After generic Trust plus acceptEdits, the model can silently plant Netlify/Vercel/Wrangler build commands. The next netlify build / vercel build|dev / wrangler deploy — or the next platform deploy — runs attacker commands as the victim (locally) or in the deploy environment with deploy secrets (remotely). Distinct delayed supply-chain RCE from filed GitHub Actions / Jenkins-style CI.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits CLAUDE.md instructing a 'fix' of netlify.toml / vercel.json / wrangler.toml build settings (optional: project permissions.defaultMode acceptEdits).\n2. Victim clones, reviews the tree (no malicious build command yet), and trusts the folder. TrustDialog is generic; acceptEdits does not show Bypass Permissions.\n3. FileWrite of netlify.toml (or vercel.json / wrangler.toml) is auto-allowed: basenames are absent from DANGEROUS_FILES; no parent dir is in DANGEROUS_DIRECTORIES.\n4. Victim runs netlify build / vercel / wrangler deploy, or pushes and the host runs the build — planted command executes.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:652-665",
+        "src/utils/permissions/filesystem.ts:1361-1375",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "src/tools/FileEditTool/FileEditTool.ts:125-131",
+        "src/utils/permissions/permissionSetup.ts:743-772"
+      ],
+      "remediation": "Add netlify.toml, vercel.json, wrangler.toml (and similar hosting build configs such as fly.toml/render.yaml/amplify.yml) to DANGEROUS_FILES so acceptEdits cannot auto-write deploy build commands. Keep the same bar as filed CI workflow paths. Do not honor defaultMode acceptEdits from projectSettings without disclosing it.",
+      "why_distinct": "Distinct from filed .github/workflows and non-GitHub CI YAML (Jenkins/GitLab/Circle/Azure/Travis/Bitbucket/Buildkite/Drone). These are hosting-platform build/deploy configs (Netlify/Vercel/Cloudflare Workers) with different paths and local CLI triggers, not CI pipeline files.",
+      "poc_video_notes": "At-rest code trace. Local check confirmed netlify.toml, vercel.json, and wrangler.toml are AUTO while .git/hooks and .mcp.json are ASK. Platform docs: Netlify [build] command, Vercel buildCommand/installCommand/devCommand, Wrangler [build] command all execute shell. A live acceptEdits FileWrite plus deploy was not run."
+    }
+  ],
+  "focus_b": {
+    "result": "NONE",
+    "note": "Hooks/skills/slash/MCP/LSP/SessionStart/cron/WebFetch/OAuth/updater/include/CLAUDE.md/plugin surfaces already heavily filed; no NEW distinct complete attack chain validated this pass beyond Focus A acceptEdits write gaps."
+  },
+  "deferred_auto_not_filed": [
+    {
+      "path": ".overcommit.yml / .simple-git-hooks.js / Dangerfile",
+      "why": "Valid AUTO gaps (git-hook managers / Danger Ruby eval). Deferred to keep report to strongest 1-3; overcommit/simple-git-hooks are same delayed-hook class as filed husky/lefthook/pre-commit; Dangerfile overlaps Gemfile Ruby-eval class."
+    },
+    {
+      "path": "mise.toml / deno.json tasks / build.zig / Package.swift / fly.toml / render.yaml",
+      "why": "AUTO under acceptEdits but weaker popularity or same delayed-toolchain/deploy class as the three filed findings."
+    },
+    {
+      "path": "Rakefile / Earthfile / Tiltfile / Procfile / Pipfile / pyproject.toml / tox.ini / noxfile.py / composer.json / Bazel / Packer / Pulumi / serverless",
+      "why": "Already filed or explicitly rejected in prior hunts as Makefile/package.json/CI/TF siblings."
+    }
+  ]
+}
