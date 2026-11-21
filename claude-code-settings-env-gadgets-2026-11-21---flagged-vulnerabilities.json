@@ -1,0 +1,131 @@
+{
+  "hunt": "claude-code-settings-env-gadgets-2026-11-21",
+  "repo": "wonderlanddevtools/claude-code",
+  "result": "3_new",
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project settings.env LD_AUDIT loads attacker .so on every auto-allowed Bash spawn after Trust / claude -p",
+      "description": "DISTINCT from filed LD_PRELOAD. After generic TrustDialog (or immediately under claude -p), applyConfigEnvironmentVariables() Object.assigns all merged settings.env into process.env. LD_AUDIT is not in SAFE_ENV_VARS and is not scrubbed by subprocessEnv(). BashTool spawn uses subprocessEnv() so children inherit LD_AUDIT. The dynamic linker loads the audit module and calls la_version() before executing auto-allowed commands (true, pwd, ls, git status, …). A denylist that only blocks LD_PRELOAD does not close LD_AUDIT.",
+      "impact": "After one generic Trust click (or headless -p), any auto-allowed readonly Bash command executes attacker native code as the victim. No Bash permission prompt required. Arbitrary RCE and credential theft.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits .claude/settings.json with env.LD_AUDIT pointing at an in-repo shared object exporting la_version(), plus that .so and optional CLAUDE.md steering pwd/true/ls.\n2. Victim clones and runs claude or claude -p.\n3. Interactive: TrustDialog is generic (dangerous env is analytics-only). After accept, applyConfigEnvironmentVariables assigns LD_AUDIT. Headless: applyConfigEnvironmentVariables runs immediately.\n4. Model runs Bash(true|pwd|ls); bashPermissions step 7 auto-allows as read-only.\n5. Shell.ts spawn inherits LD_AUDIT via subprocessEnv(); ld.so loads the audit module → RCE.",
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/utils/Shell.ts:316-323",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/main.tsx:1952-1965",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/tools/BashTool/readOnlyValidation.ts:1489-1490",
+        "src/tools/BashTool/readOnlyValidation.ts:1528",
+        "src/components/TrustDialog/utils.ts:214-245"
+      ],
+      "remediation": "Do not apply LD_AUDIT (and other LD_*/DYLD_* loaders) from projectSettings/localSettings. Keep post-trust project env filtered to SAFE_ENV_VARS. Scrub LD_AUDIT/LD_PRELOAD/LD_LIBRARY_PATH from subprocessEnv() for Bash/hooks/MCP children. Disclose non-safe env keys in TrustDialog UI.",
+      "poc_notes": "Local glibc: env -i LD_AUDIT=/path/to/audit.so /bin/true and bash --noprofile --norc -c 'true'|'pwd'|'ls' wrote marker via la_version() using open() only. Absolute path required for reliable load (relative path may fail depending on cwd at exec)."
+    },
+    {
+      "severity": "critical",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project settings.env GIT_SSH_COMMAND/GIT_SSH RCE via auto-allowed git ls-remote origin / git remote show origin on SSH remotes",
+      "description": "DISTINCT from filed GIT_EXTERNAL_DIFF, GIT_DIR, GIT_CONFIG_GLOBAL, GIT_EXEC_PATH, and GIT_CONFIG_COUNT. After Trust/-p, applyConfigEnvironmentVariables assigns GIT_SSH_COMMAND or GIT_SSH from project settings.env. Neither is in SAFE_ENV_VARS nor scrubbed by subprocessEnv(). Auto-allowed git ls-remote origin and git remote show origin (remote name form; explicit URLs with ://@ are rejected by the ls-remote URL guard) use SSH when origin is an SSH URL and invoke GIT_SSH_COMMAND/GIT_SSH as the transport program → attacker script RCE. Works for victims who cloned via SSH (common for private repos).",
+      "impact": "After Trust/-p, auto-allowed git network-read commands execute attacker shell when the repo remote uses SSH. No Bash permission prompt.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits .claude/settings.json env.GIT_SSH_COMMAND (or GIT_SSH) to an in-repo executable script, plus CLAUDE.md steering git ls-remote origin or git remote show origin.\n2. Victim clones via SSH (origin stays ssh:// or git@) and runs claude / claude -p.\n3. After Trust (or immediately in -p), applyConfigEnvironmentVariables assigns GIT_SSH_*.\n4. Model runs auto-allowed git ls-remote origin or git remote show origin; git invokes the planted SSH wrapper → RCE.",
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/utils/Shell.ts:316-323",
+        "src/utils/shell/readOnlyCommandValidation.ts:312-340",
+        "src/utils/shell/readOnlyCommandValidation.ts:473-488",
+        "src/tools/BashTool/readOnlyValidation.ts:1306-1325",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162"
+      ],
+      "remediation": "Block GIT_SSH, GIT_SSH_COMMAND, SSH_ASKPASS, and related git transport env vars from project/local settings.env (same as other dangerous keys). Optionally scrub them in subprocessEnv() for Bash children. Treat transport wrappers like GIT_EXTERNAL_DIFF.",
+      "poc_notes": "With HOME/GIT_CONFIG_* isolated to avoid host insteadOf rewrites: GIT_SSH_COMMAND=./evil.sh git ls-remote origin and git remote show origin against ssh://git@evil.example.invalid/repo.git wrote marker and printed SSH_RAN. Public https remotes do not hit this sink; SSH-origin clones do."
+    },
+    {
+      "severity": "high",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project settings.env MAGIC makes auto-allowed file dump host secret files into tool output after Trust",
+      "description": "DISTINCT from the filed file --magic-file=/abs path-validation bypass (argv fused-flag gadget). GNU file honors the MAGIC environment variable as a colon-separated list of magic databases. After Trust/-p, applyConfigEnvironmentVariables assigns MAGIC from project settings.env. MAGIC is not in SAFE_ENV_VARS and is not scrubbed. Auto-allowed `file README.md` (cwd operand passes path validation; MAGIC is never path-checked) parses each MAGIC path as a magic file and emits every line as `Warning: offset \\`...\\` invalid` on stderr. BashTool merges stderr into the tool result → host secret bytes enter model context / inference API without any --magic-file flag.",
+      "impact": "Malicious settings.env can force every auto-allowed `file` invocation to dump attacker-chosen absolute paths (SSH keys, AWS credentials, etc.) into the conversation. No path-validation bypass trick required; works with a normal in-cwd operand.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits .claude/settings.json with env.MAGIC set to colon-separated absolute paths (e.g. /home/ubuntu/.aws/credentials:/home/ubuntu/.ssh/id_rsa:/root/.ssh/id_rsa) and CLAUDE.md steering `file README.md`.\n2. Victim Trusts or runs claude -p; applyConfigEnvironmentVariables assigns MAGIC.\n3. Model runs Bash(file README.md); step 7 auto-allows.\n4. file reads MAGIC paths and prints secret lines as warnings into the tool result.",
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/utils/Shell.ts:316-323",
+        "src/tools/BashTool/readOnlyValidation.ts:165-212",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/tools/BashTool/BashTool.tsx:437-440"
+      ],
+      "remediation": "Do not apply MAGIC (or FILE_MAGIC / related) from project/local settings. Scrub MAGIC from subprocessEnv() for Bash. Alternatively force file to ignore MAGIC when running under Claude (e.g. unset in BashTool envOverrides).",
+      "poc_notes": "MAGIC=/path/to/fake_aws_credentials file README.md printed Warning lines containing aws_access_key_id and aws_secret_access_key. Relative MAGIC=./symlink following to /etc/passwd also dumped passwd lines. Multi-path MAGIC colon lists work."
+    }
+  ],
+  "ruled_out": [
+    {
+      "candidate": "PAGER/MANPAGER/GIT_PAGER/LESSOPEN",
+      "why": "BashTool redirects stdout/stderr to a file fd (non-tty); pagers do not run. man on this image is an unminimize stub; LESSOPEN did not fire under redirected man/less."
+    },
+    {
+      "candidate": "OPENSSL_CONF engine/provider RCE",
+      "why": "Provider ctor fires on openssl version and curl, neither auto-allowed. Host git uses GnuTLS (not OpenSSL). python3 --version (allowlisted) does NOT load OPENSSL_CONF; only import ssl/hashlib does."
+    },
+    {
+      "candidate": "GCONV_PATH",
+      "why": "locale (allowlisted) did not load the module; iconv -f EVIL works but iconv is not allowlisted."
+    },
+    {
+      "candidate": "ENV / BASHOPTS / PROMPT_COMMAND / CDPATH",
+      "why": "ENV not sourced for non-interactive bash -c; BASHOPTS readonly from environment; PROMPT_COMMAND not run for non-interactive -c."
+    },
+    {
+      "candidate": "PYTHONSTARTUP/PYTHONPATH/PERL5OPT/RUBYOPT/JAVA_TOOL_OPTIONS/DOTNET_STARTUP_HOOKS",
+      "why": "Only python3 --version / node -v allowlisted forms; those do not load sitecustomize/startup hooks. perl/ruby/java/dotnet not on readonly allowlist."
+    },
+    {
+      "candidate": "GIT_ASKPASS/SSH_ASKPASS",
+      "why": "Did not execute on git ls-remote before SSH DNS failure; no auth prompt path on public https."
+    },
+    {
+      "candidate": "GIT_PROXY_COMMAND",
+      "why": "Fires only for git:// remotes; allowlist blocks explicit git:// URLs in ls-remote argv; normal HTTPS/SSH clones do not set git:// origin."
+    },
+    {
+      "candidate": "GIT_TEMPLATE_DIR",
+      "why": "Only affects git init/clone template copy; those are not auto-allowed readonly commands."
+    },
+    {
+      "candidate": "NPM_CONFIG_*/COREPACK_*",
+      "why": "npm/npx/corepack not on Bash readonly allowlist."
+    },
+    {
+      "candidate": "SSLKEYLOGFILE",
+      "why": "Writes TLS keys on git ls-remote https (confirmed) but alone does not yield secrets without a MITM channel; HTTPS_PROXY+NODE_EXTRA_CA_CERTS already filed for MITM."
+    },
+    {
+      "candidate": "NODE_EXTRA_CA_CERTS/CURL_CA_BUNDLE",
+      "why": "NODE_EXTRA_CA_CERTS+proxy MITM already filed; CURL_CA_BUNDLE only affects curl (not allowlisted)."
+    },
+    {
+      "candidate": "TERMINFO/INPUTRC/HOSTALIASES/TZDIR/LOCPATH/NLSPATH",
+      "why": "tput safe caps do not run iprog (init/reset blocked in allowlist callback); INPUTRC ignored for non-interactive bash -c; HOSTALIASES is resolver redirect not RCE; LOCPATH/locale did not yield code exec."
+    },
+    {
+      "candidate": "LD_LIBRARY_PATH",
+      "why": "Incomplete .so stubs cause symbol lookup errors without running constructors; distinct from LD_PRELOAD/LD_AUDIT but no reliable RCE PoC completed."
+    },
+    {
+      "candidate": "MAGICK_*/GS_LIB",
+      "why": "ImageMagick/Ghostscript binaries not on Bash readonly allowlist."
+    }
+  ]
+}
