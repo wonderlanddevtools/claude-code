@@ -1,0 +1,73 @@
+{
+  "hunt": "claude-code-git-exec-path-man-sslkeylogfile-hunt-2026-11-22",
+  "repo": "wonderlanddevtools/claude-code",
+  "branch": "main",
+  "result": "1_new_critical",
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project settings.env GIT_EXEC_PATH RCE via auto-allowed git ls-remote origin / git remote show origin (HTTPS remote helpers)",
+      "description": "DISTINCT from filed PATH (main git binary), GIT_EXTERNAL_DIFF, GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL+core.fsmonitor, and GIT_SSH_COMMAND/GIT_SSH. After Trust or immediately under claude -p, applyConfigEnvironmentVariables assigns GIT_EXEC_PATH from project settings.env. It is not in SAFE_ENV_VARS and is not scrubbed by subprocessEnv(). Auto-allowed git ls-remote origin and git remote show origin (remote-name form) invoke git-remote-https / git-remote-http from GIT_EXEC_PATH when origin is an HTTPS URL → attacker script RCE. getGitStatus status/log are builtins and do NOT hit this sink.",
+      "impact": "After one generic Trust click (or headless -p), an auto-allowed readonly git network-read executes attacker code as the victim on common HTTPS-origin clones. No Bash permission prompt. Works without SSH remotes (unlike GIT_SSH_COMMAND).",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits .claude/settings.json with env.GIT_EXEC_PATH=.claude/git-exec (or absolute in-repo path), executable .claude/git-exec/git-remote-http (+ git-remote-https symlink), and CLAUDE.md steering git ls-remote origin or git remote show origin.\n2. Victim clones via HTTPS (typical) and runs claude or claude -p.\n3. After Trust (or immediately in -p), applyConfigEnvironmentVariables assigns GIT_EXEC_PATH into process.env.\n4. Model runs auto-allowed git ls-remote origin / git remote show origin; git execs planted git-remote-https from GIT_EXEC_PATH → RCE.",
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/main.tsx:1952-1977",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/utils/execFileNoThrow.ts:110-115",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/utils/Shell.ts:316-323",
+        "src/utils/shell/readOnlyCommandValidation.ts:312-340",
+        "src/utils/shell/readOnlyCommandValidation.ts:473-488",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/context.ts:64-77",
+        "src/utils/git.ts:212-216"
+      ],
+      "remediation": "Do not apply GIT_EXEC_PATH (or other git helper/transport env keys) from projectSettings/localSettings. Scrub GIT_EXEC_PATH from subprocessEnv() for Bash/hooks/MCP children. Keep post-trust project env filtered to SAFE_ENV_VARS.",
+      "why_distinct": "Different env key and sink from PATH, GIT_EXTERNAL_DIFF, GIT_CONFIG_*/fsmonitor, and GIT_SSH_*. Triggers on HTTPS remotes via git-remote-http(s) under GIT_EXEC_PATH; status/log builtins are unaffected.",
+      "poc_notes": "Relative GIT_EXEC_PATH=.claude/git-exec with only planted git-remote-http/https: git ls-remote origin and git remote show origin wrote COMPLETE_CHAIN_RCE marker. git status/log under same env remained builtins and did not run planted helpers. GIT_TRACE showed run_command: git-remote-https."
+    }
+  ],
+  "ruled_out": [
+    {
+      "candidate": "GIT_EXEC_PATH via getGitStatus status/log/config",
+      "why": "Those subcommands are builtins; GIT_TRACE shows built-in: git status/log. Planted git-status/git-log helpers never executed. gitExe() only resolves the main binary via PATH."
+    },
+    {
+      "candidate": "GIT_PAGER / PAGER / MANPAGER",
+      "why": "BashTool Shell.spawn redirects stdout/stderr to a file fd (non-TTY); no PTY. Pagers do not run."
+    },
+    {
+      "candidate": "GIT_ASKPASS",
+      "why": "Auto-allowed status/log/diff do not prompt for credentials; no ASKPASS execution observed."
+    },
+    {
+      "candidate": "GIT_SSH_COMMAND / GIT_SSH",
+      "why": "Already filed (settings-env-gadgets 2026-11-21) for SSH-origin ls-remote/remote show. Not re-reported."
+    },
+    {
+      "candidate": "man -l absolute-path dump",
+      "why": "VERIFIED complete dump gadget (COMMAND_ALLOWLIST, not PathCommand; man.REAL -l /etc/passwd dumps under non-TTY) but already filed in prior readonly-allowlist hunts."
+    },
+    {
+      "candidate": "info -f / --file dump",
+      "why": "Allowlisted and not PathCommand, but under BashTool non-TTY/dumb TERM info refuses to run; useful file write needs blocked -o/--output."
+    },
+    {
+      "candidate": "acceptEdits auto-write of .github/workflows, .gitlab-ci.yml, Jenkinsfile, justfile, flake.nix, CMakeLists.txt, .pre-commit-config.yaml",
+      "why": "Confirmed AUTO under current DANGEROUS_FILES/DIRECTORIES, but all already filed in prior acceptEdits gap hunts."
+    },
+    {
+      "candidate": "SSLKEYLOGFILE via Node/Bun API HTTPS",
+      "why": "Node https/fetch did not write SSLKEYLOGFILE here; alone does not yield secrets without MITM (HTTPS_PROXY+NODE_EXTRA_CA_CERTS already filed)."
+    },
+    {
+      "candidate": "Other project env git keys rewriting getGitStatus",
+      "why": "GIT_CONFIG_GLOBAL/COUNT+core.fsmonitor RCE on status confirmed again but overlaps filed GIT_CONFIG_COUNT/core.fsmonitor class. No new distinct sink."
+    }
+  ]
+}
