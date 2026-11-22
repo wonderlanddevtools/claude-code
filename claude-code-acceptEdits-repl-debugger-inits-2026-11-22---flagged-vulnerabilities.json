@@ -1,0 +1,41 @@
+{
+  "hunt": "claude-code-acceptEdits-repl-debugger-inits-2026-11-22",
+  "repo": "wonderlanddevtools/claude-code",
+  "commit": "b5b0988",
+  "result": "1 NEW HIGH; remaining laundry-list candidates already filed or weak siblings",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of language REPL/debugger cwd init files (.pdbrc, .Rprofile, .irbrc, .ghci, …) that parallel blocked shell rcs.",
+      "description": "DISTINCT from filed shell-rc blocks (.bashrc/.zshrc/.profile), Gemfile/setup.py install eval, vite/jest/eslint JS configs, and Makefile/justfile/Taskfile build recipes. Under acceptEdits, in-cwd writes auto-allow after checkPathSafetyForAutoEdit. DANGEROUS_FILES intentionally lists shell startup basenames (.bashrc, .bash_profile, .zshrc, .zprofile, .profile) plus .gitconfig/.mcp.json/.ripgreprc/.claude.json, but omits language REPL and debugger cwd init files that auto-execute on a normal later session start: .pdbrc (Python pdb), .Rprofile/.Renviron (R), .irbrc/.pryrc (Ruby IRB/Pry), .ghci (GHCi), .ocamlinit (OCaml toplevel), and .gdbinit/.lldbinit (debuggers; gdb may also gate on auto-load safe-path). DANGEROUS_DIRECTORIES is only .git/.vscode/.idea/.claude. FileWrite/FileEdit of those init files therefore auto-allows. Live bun checkPathSafetyForAutoEdit: all listed inits AUTO; .bashrc/.mcp.json ASK. Live PoC: planted .pdbrc ran under python3 -m pdb and wrote a marker; CPython pdb.Pdb.__init__ documents Read ~/.pdbrc and ./.pdbrc and opens \".pdbrc\". Project settings can set permissions.defaultMode acceptEdits with no BypassPermissionsModeDialog.",
+      "impact": "After generic Trust plus acceptEdits (project-planted or user-selected), the model can silently plant REPL/debugger startup code. The next python -m pdb, R, irb/pry, ghci, ocaml, or gdb/lldb session in the repo executes attacker code as the victim — delayed RCE without a Write prompt, via the same threat class DANGEROUS_FILES already tried to cover for shell rcs.",
+      "verified": true,
+      "status": "active",
+      "background_composer_id": "bc-4171301b-a70a-5ed9-94f8-dd9011cfe4e1",
+      "attack_path": "1. Attacker commits CLAUDE.md instructing a 'debug/REPL helper' write of .pdbrc / .Rprofile / .irbrc / .ghci / .ocamlinit / .gdbinit (optional: .claude/settings.json permissions.defaultMode acceptEdits).\n2. Victim clones, reviews the tree (no malicious init yet), and trusts the folder. TrustDialog is generic; acceptEdits does not show Bypass Permissions.\n3. FileWrite of the init file passes isDangerousFilePathToAutoEdit (basename absent from DANGEROUS_FILES; no parent in DANGEROUS_DIRECTORIES) and is auto-allowed because the path is inside cwd.\n4. Victim later runs a normal toolchain command in that directory (python -m pdb, R, irb, ghci, ocaml, gdb/lldb). The tool auto-sources the planted cwd init and executes attacker code.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:620-665",
+        "src/utils/permissions/filesystem.ts:1361-1376",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "src/tools/FileEditTool/FileEditTool.ts:125-131",
+        "src/utils/permissions/permissionSetup.ts:743-772",
+        "src/components/TrustDialog/TrustDialog.tsx:203-209"
+      ],
+      "remediation": "Add .pdbrc, .Rprofile, .Renviron, .irbrc, .pryrc, .ghci, .ocamlinit, .gdbinit, .lldbinit (and similar language REPL/debugger cwd inits) to DANGEROUS_FILES alongside the existing shell rc list. Do not honor defaultMode acceptEdits from projectSettings without disclosing it. Require an explicit prompt for writes that become auto-sourced session startup code.",
+      "why_distinct": "Not shell rcs (those are already blocked). Not Gemfile/setup.py/JS-config/Makefile (install/build eval). Trigger is REPL/debugger session start auto-sourcing cwd inits — the missing parallel to .bashrc in DANGEROUS_FILES.",
+      "poc_video_notes": "Live PoC: python3 -m pdb with planted ./.pdbrc executed os.system and created a marker file. bun checkPathSafetyForAutoEdit returned AUTO for .pdbrc/.Rprofile/.irbrc/.pryrc/.ghci/.ocamlinit/.gdbinit/.lldbinit and ASK for .bashrc/.mcp.json. R/irb/ghci/ocaml/gdb were not installed on this host; those siblings rely on documented cwd auto-load. A live acceptEdits FileWrite REPL session was not run. Marker contents omitted."
+    }
+  ],
+  "ruled_out": [
+    "justfile/Taskfile/Earthfile/flake.nix/.cargo/CMake/meson/composer/Podfile/Fastfile — already filed or prior-rejected siblings",
+    "pre-commit/lefthook/non-GH CI — already filed",
+    "fly.toml/render.yaml/railway — deploy siblings of filed netlify/vercel/wrangler",
+    "playwright/cypress/webpack/astro/svelte/nuxt — JS-config class already filed",
+    ".simple-git-hooks.js — needs reinstall",
+    "version pin files (.nvmrc/.tool-versions/rust-toolchain) — not code exec",
+    ".vimrc/.exrc — exrc off by default"
+  ]
+}
