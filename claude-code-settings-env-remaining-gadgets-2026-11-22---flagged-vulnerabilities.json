@@ -1,0 +1,6 @@
+{
+  "hunt": "claude-code-settings-env-remaining-gadgets-2026-11-22",
+  "result": "NONE",
+  "findings": [],
+  "notes": "Verified GIT_PROXY_COMMAND (git:// only; incomplete), core.gitProxy (GIT_CONFIG class), OPENSSL_CONF (no allowlisted OpenSSL consumer; git uses GnuTLS), BUN_OPTIONS/DENO_DIR, TESSDATA/FONTCONFIG/GIO/GTK/QT, ICONV_PATH/CHARSETALIASDIR, LD_PROFILE/MALLOC_TRACE, PCSCANLIB/HTS_PATH, PERL*/RUBYLIB, version allowlist gaps, git var/version, ssh -G, curl CURLOPT. No NEW complete settings.env RCE chains beyond already-filed list."
+}
