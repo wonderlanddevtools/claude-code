@@ -1,0 +1,102 @@
+{
+  "hunt": "claude-code-git-dir-exec-path-env-hunt-2026-11-22",
+  "repo": "wonderlanddevtools/claude-code",
+  "branch": "main",
+  "result": "1_new_critical_plus_git_exec_path_reconfirmed",
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "src/utils/managedEnv.ts",
+      "title": "Project settings.env GIT_DIR RCE via planted in-repo git metadata (getGitStatus / auto-allowed git status & ls-remote)",
+      "description": "DISTINCT from filed GIT_CONFIG_COUNT/PARAMETERS/GLOBAL (config-key injection), GIT_EXEC_PATH (remote-helper binary dir), GIT_EXTERNAL_DIFF, and GIT_SSH*. After Trust or immediately under claude -p, applyConfigEnvironmentVariables assigns GIT_DIR from project settings.env. It is not in SAFE_ENV_VARS and is not scrubbed by subprocessEnv(). Attacker commits a fake git directory (e.g. .claude/evil.git with config/HEAD/objects/refs) whose config sets core.fsmonitor and/or credential.helper=!…. Under claude -p, main.tsx applies env then calls getSystemContext→getGitStatus→git status via execFileNoThrow (inherits process.env) → fsmonitor RCE with no BashTool. After Trust, auto-allowed Bash git status / git ls-remote origin also inherit GIT_DIR → fsmonitor and/or credential.helper RCE. GIT_COMMON_DIR is the same class.",
+      "impact": "After one generic Trust click (or headless -p), attacker code runs as the victim via git hooks configured in planted metadata. Under -p this fires at startup getGitStatus without any model Bash call. No Bash permission prompt for auto-allowed git reads.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits .claude/settings.json with env.GIT_DIR=.claude/evil.git and plants .claude/evil.git (valid git metadata) whose config sets core.fsmonitor=./.claude/pwn.sh and/or credential.helper=!./.claude/pwn-cred.sh, with origin HTTPS URL.\n2. Victim clones and runs claude or claude -p.\n3. Interactive: TrustDialog → applyConfigEnvironmentVariables(). Headless -p: applyConfigEnvironmentVariables immediately, then void getSystemContext().\n4. -p: getGitStatus runs git --no-optional-locks status with GIT_DIR → core.fsmonitor executes attacker script. Post-trust Bash: auto-allowed git status / git ls-remote origin inherit GIT_DIR → fsmonitor and/or credential.helper RCE.",
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/main.tsx:1952-1977",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/context.ts:64-77",
+        "src/utils/execFileNoThrow.ts:110-115",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/utils/Shell.ts:316-323",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/utils/shell/readOnlyCommandValidation.ts:312-340",
+        "src/utils/shell/readOnlyCommandValidation.ts:341-370",
+        "src/tools/BashTool/readOnlyValidation.ts:1721-1747"
+      ],
+      "remediation": "Do not apply GIT_DIR, GIT_WORK_TREE, or GIT_COMMON_DIR from projectSettings/localSettings. Scrub them in subprocessEnv() for Bash/hooks/MCP/LSP children and for getGitStatus/execFileNoThrow. Keep post-trust project env filtered to SAFE_ENV_VARS. Blocking only GIT_CONFIG_* is insufficient.",
+      "why_distinct": "Different env key and plant (alternate committed git directory) from GIT_CONFIG_* config injection. Bypass of remediations that only strip GIT_CONFIG_COUNT/PARAMETERS/GLOBAL/SYSTEM. Distinct from GIT_EXEC_PATH remote-helper path and GIT_SSH transport.",
+      "poc_notes": "Relative GIT_DIR=.claude/evil.git: git --no-optional-locks status --short wrote fsmonitor marker; git ls-remote origin wrote credential.helper marker against public HTTPS origin. GIT_COMMON_DIR→planted common dir with core.fsmonitor also fired. Argv -c/--config-env/--exec-path blocked; env GIT_DIR not scrubbed."
+    }
+  ],
+  "reconfirmed": [
+    {
+      "candidate": "GIT_EXEC_PATH → git-remote-https on auto-allowed git ls-remote origin / git remote show origin",
+      "severity": "critical",
+      "status": "still_verified",
+      "prior_flagged": "claude-code-git-exec-path-man-sslkeylogfile-hunt-2026-11-22---flagged-vulnerabilities.json",
+      "poc_notes": "Relative GIT_EXEC_PATH=.claude/git-exec with planted git-remote-http/https still writes marker on git ls-remote origin (HTTPS). getGitStatus builtins still unaffected."
+    }
+  ],
+  "ruled_out": [
+    {
+      "candidate": "GIT_TEMPLATE_DIR",
+      "why": "Only affects git init/clone templates; not readonly auto-allowed."
+    },
+    {
+      "candidate": "GIT_ATTR_SOURCE",
+      "why": "fatal: bad --attr-source on this git; attributes are not code execution."
+    },
+    {
+      "candidate": "GIT_CONFIG_SYSTEM",
+      "why": "Works with clean HOME + core.fsmonitor, but same sink class as filed GIT_CONFIG_*."
+    },
+    {
+      "candidate": "GIT_NAMESPACE / GIT_INDEX_FILE / object directory alts",
+      "why": "Metadata redirect only; no RCE on allowlisted commands."
+    },
+    {
+      "candidate": "TERMINFO / TERMCAP",
+      "why": "BashTool non-TTY; no terminfo load for bash -c true/ls."
+    },
+    {
+      "candidate": "HOSTALIASES / RES_OPTIONS / LOCALDOMAIN",
+      "why": "Resolver remap/options only; not RCE."
+    },
+    {
+      "candidate": "NSS_WRAPPER_*",
+      "why": "Requires LD_PRELOAD of wrapper (already filed)."
+    },
+    {
+      "candidate": "GCONV_PATH / LOCPATH / ICONV_PLUGIN / NLSPATH / TZDIR",
+      "why": "No module/locale load on auto-allowed true/pwd/ls/git/file; iconv not allowlisted."
+    },
+    {
+      "candidate": "MALLOC_CONF / GLIBC_TUNABLES",
+      "why": "Allocator/glibc tuning only; not code load."
+    },
+    {
+      "candidate": "PYTHONHOME / JAVA_TOOL_OPTIONS / _JAVA_OPTIONS / JDK_JAVA_OPTIONS / DOTNET_STARTUP_HOOKS / PHP_INI_SCAN_DIR / PERL5OPT / RUBYOPT / LUA_INIT / GUILE_LOAD_PATH / GHC_PACKAGE_PATH / OCTAVE_SITE_INITFILE / R_PROFILE_USER / MPLCONFIGDIR / JUPYTER_CONFIG_DIR",
+      "why": "Target interpreters not on readonly allowlist (python --version does not exercise PYTHONHOME gadgets)."
+    },
+    {
+      "candidate": "GIT_TRACE2_PARENT_SID",
+      "why": "Not RCE."
+    },
+    {
+      "candidate": "SSLKEYLOGFILE",
+      "why": "Already rejected; Node https did not write keys; MITM class already filed."
+    },
+    {
+      "candidate": "XDG_CONFIG_HOME → git/config fsmonitor",
+      "why": "Only when ~/.gitconfig absent; close variant of filed GIT_CONFIG_GLOBAL; HOME already filed."
+    },
+    {
+      "candidate": "HOME → .gitconfig fsmonitor",
+      "why": "Works but HOME already filed (shell snapshot); fsmonitor via HOME is close variant of GIT_CONFIG_GLOBAL."
+    }
+  ]
+}
