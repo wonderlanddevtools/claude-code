@@ -1,0 +1,8 @@
+{
+  "hunt": "claude-code-remaining-surfaces-distinct-hunt-2026-11-22",
+  "repo": "wonderlanddevtools/claude-code",
+  "commit": "f39ac02a744aea250078e0f402f41e639b4c7548",
+  "result": "NONE",
+  "findings": [],
+  "summary": "No NEW MEDIUM+ complete attacker→impact chains distinct from already-reported settings gadgets, acceptEdits dangerous-file gaps, ungated cron→skill RCE, LSP/include/ConfigTool, WebFetch SSRF, or session/chrome/oauth findings. Remaining AUTO acceptEdits paths are same-class siblings of already-filed hook/CI/package/deploy/IDE gaps or incomplete alone."
+}
