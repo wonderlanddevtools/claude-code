@@ -1,0 +1,43 @@
+{
+  "hunt": "claude-code-acceptEdits-cursor-hooks-2026-11-22",
+  "repo": "wonderlanddevtools/claude-code",
+  "commit": "ce1572f",
+  "result": "1 NEW HIGH; remaining debugger/REPL/git-hook/systemd/editor candidates already filed, gated, or weak siblings",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite under .cursor/ (hooks.json / mcp.json) while .vscode/.idea/.claude are blocked — Cursor hooks auto-execute.",
+      "description": "DISTINCT from filed husky/lefthook/.git hooks, root .mcp.json, REPL/debugger cwd inits, and the existing .vscode block. DANGEROUS_DIRECTORIES is only .git/.vscode/.idea/.claude. The comment at filesystem.ts:430 blocks .vscode specifically to prevent IDE settings manipulation and potential code execution, but omits .cursor/. Under acceptEdits, in-cwd FileWrite of .cursor/hooks.json, .cursor/hooks/*, and .cursor/mcp.json therefore auto-allows after checkPathSafetyForAutoEdit. Cursor project hooks (/.cursor/hooks.json) automatically load and run in trusted workspaces; Cursor reloads hooks.json on change; cloud agents pick up project hooks. Workspace trust is off by default (all folders trusted). Hook command can be inline shell — no separate chmod. Live bun FileWriteTool check (cwd set, mode acceptEdits): .cursor/hooks.json / .cursor/mcp.json ALLOW; .vscode/tasks.json / .claude/settings.json / .mcp.json / .bashrc ASK. Project settings can set permissions.defaultMode acceptEdits with no BypassPermissionsModeDialog.",
+      "impact": "After generic Trust plus acceptEdits (project-planted or user-selected), the model can silently plant .cursor/hooks.json (and optional hook scripts / .cursor/mcp.json). The next Cursor agent event (sessionStart, afterFileEdit, beforeShellExecution, …), workspaceOpen, or Cursor cloud-agent run executes attacker commands as the victim — delayed RCE via the IDE hook loader that Claude Code already tried to cover for .vscode/.claude but missed for .cursor.",
+      "verified": true,
+      "status": "active",
+      "background_composer_id": "bc-43a9416c-f180-4f9f-a81e-bb565a615f2d",
+      "attack_path": "1. Attacker commits CLAUDE.md instructing a 'Cursor project helper' write of .cursor/hooks.json (optional: .claude/settings.json permissions.defaultMode acceptEdits).\n2. Victim clones, reviews the tree (no malicious hooks yet), and trusts the folder in Claude Code. TrustDialog is generic; acceptEdits does not show Bypass Permissions.\n3. FileWrite of .cursor/hooks.json with e.g. sessionStart/afterFileEdit/beforeShellExecution command set to inline shell RCE passes isDangerousFilePathToAutoEdit (.cursor absent from DANGEROUS_DIRECTORIES) and is auto-allowed because the path is inside cwd.\n4. Victim later opens/continues the project in Cursor (or a Cursor cloud agent runs). Cursor auto-loads project hooks and executes the planted command.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:427-434",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:620-665",
+        "src/utils/permissions/filesystem.ts:1361-1376",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "src/utils/permissions/permissionSetup.ts:743-772",
+        "https://cursor.com/docs/hooks (project hooks auto-load in trusted workspaces; cloud agents load .cursor/hooks.json)"
+      ],
+      "remediation": "Add .cursor to DANGEROUS_DIRECTORIES alongside .vscode/.idea/.claude so acceptEdits cannot auto-write Cursor hooks or project MCP configs. Do not honor defaultMode acceptEdits from projectSettings without disclosing it. Require an explicit prompt for writes under IDE config directories that auto-execute.",
+      "why_distinct": "Not husky/lefthook/.git (those paths are blocked via .git). Not root .mcp.json (already in DANGEROUS_FILES). Not REPL/debugger cwd inits (already filed). Trigger/loader is Cursor project hooks (and optionally .cursor/mcp.json) — the missing sibling of the intentional .vscode code-execution block.",
+      "poc_video_notes": "Live bun FileWriteTool+checkPathSafetyForAutoEdit with setOriginalCwd: .cursor/hooks.json, .cursor/hooks/pwn.sh, .cursor/mcp.json returned behavior=allow decisionReason.mode=acceptEdits; .vscode/tasks.json, .claude/settings.json, .mcp.json, .bashrc returned ask/safetyCheck. A live Claude Code REPL session writing hooks and a live Cursor IDE hook fire were not run on this host; Cursor auto-load behavior is from official docs."
+    }
+  ],
+  "ruled_out": [
+    ".gdbinit/.lldbinit — already filed; modern defaults gate cwd auto-load",
+    ".pdbrc/.Rprofile/.irbrc/.pryrc/.ghci/.ocamlinit — already filed 2026-11-22",
+    ".perldb — same REPL/debugger class as filed .pdbrc",
+    ".guile/.sbclrc/.pythonrc — home/PYTHONSTARTUP only",
+    ".vimrc/.exrc/.nvimrc/.nvim.lua — need exrc and/or :trust",
+    ".tmux.conf/.screenrc — not cwd auto-sourced by default",
+    ".simple-git-hooks — needs reinstall",
+    "repo systemd user units — not auto-loaded from project tree",
+    "poetry.toml/Pipfile — not RCE on write"
+  ]
+}
