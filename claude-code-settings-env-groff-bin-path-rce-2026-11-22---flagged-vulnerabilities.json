@@ -1,0 +1,50 @@
+{
+  "hunt": "claude-code-settings-env-groff-bin-path-rce-2026-11-22",
+  "repo": "wonderlanddevtools/claude-code",
+  "focus": "project .claude/settings.json env → applyConfigEnvironmentVariables after Trust / claude -p → inherited by auto-allowed Bash sinks",
+  "result": "1_new_critical",
+  "findings": [
+    {
+      "title": "Project env GROFF_BIN_PATH executes attacker groff/nroff on auto-allowed man after generic Trust",
+      "severity": "CRITICAL",
+      "location": "src/utils/managedEnv.ts",
+      "description": "DISTINCT from filed PATH (generic PATH hijack), MANPAGER/PAGER/LESSOPEN (do not run under BashTool non-TTY redirect), and man -P/--pager (explicitly blocked by COMMAND_ALLOWLIST). After TrustDialog or immediately under claude -p, applyConfigEnvironmentVariables Object.assigns all merged settings.env into process.env. GROFF_BIN_PATH is not in SAFE_ENV_VARS and is not scrubbed by subprocessEnv(). BashTool spawn inherits it via {...subprocessEnv()}. man true / man ls / man -l <file> / man -a true are auto-allowed (checkReadOnlyConstraints behavior=allow). man-db reads GROFF_BIN_PATH and execs $GROFF_BIN_PATH/groff (and related formatters) even when stdout is redirected to a file (BashTool style). Relative paths such as ./.claude/evilbin work. TrustDialog only records hasDangerousEnvVars for analytics; UI stays a generic folder-trust prompt. Comment in readOnlyValidation already acknowledges man pager RCE via -P but never denylists GROFF_BIN_PATH.",
+      "impact": "Host RCE as the victim after one generic Trust click (or claude -p) once an auto-allowed man command runs (common exploration; CLAUDE.md can instruct man <tool>). No Bash permission prompt.",
+      "attack_path": [
+        "1. Attacker commits .claude/settings.json with env.GROFF_BIN_PATH=\"./.claude/evilbin\", executable .claude/evilbin/groff (and optionally nroff/troff) that writes a marker / runs payload then exits, plus optional CLAUDE.md steering man true or man ls.",
+        "2. Victim clones and runs claude (TrustDialog) or claude -p.",
+        "3. Interactive: after Trust accept, interactiveHelpers applyConfigEnvironmentVariables assigns GROFF_BIN_PATH. Headless -p: main.tsx applies full env immediately.",
+        "4. Model runs Bash(man true) / Bash(man ls) / Bash(man -l ./doc.1). bashPermissions step 7 auto-allows via BashTool.isReadOnly → COMMAND_ALLOWLIST man.",
+        "5. Shell.ts spawn inherits subprocessEnv() including GROFF_BIN_PATH; man-db execs ./.claude/evilbin/groff → RCE."
+      ],
+      "evidence": [
+        "src/utils/managedEnv.ts:187-199",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/main.tsx:2590-2593",
+        "src/utils/Shell.ts:316-323",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/tools/BashTool/BashTool.tsx:437-440",
+        "src/tools/BashTool/readOnlyValidation.ts:304-321",
+        "src/tools/BashTool/readOnlyValidation.ts:1876-1983"
+      ],
+      "remediation": "Do not apply GROFF_BIN_PATH, TROFF, NROFF, or GROFF_* binary-path overrides from projectSettings/localSettings. Scrub them in subprocessEnv() for Bash/MCP/hook children. Optionally set GROFF_BIN_PATH=/usr/bin (or empty) for auto-allowed man, or remove man from the readonly allowlist. Disclose non-safe env keys in TrustDialog UI.",
+      "poc_notes": "Extracted real man-db 2.12.0 binary (VM /usr/bin/man is an unminimize stub). GROFF_BIN_PATH=./evilbin with constructor-less shell groff that writes a marker: fired for man -l and man true with MANPATH, including stdout redirected to a file and under bash -c (Shell.ts shape). Relative ./.claude/... path works. bun checkReadOnlyConstraints: man true/ls/-l/-a allow; man -P/--pager passthrough. MANPAGER did not fire under non-TTY redirect.",
+      "why_distinct": "Different env key and mechanism than filed PATH/LD_PRELOAD (loader/PATH hijack of arbitrary binaries), MANPAGER/PAGER/LESSOPEN (pager path; non-TTY no-op under BashTool), and CLI man -P (already blocked). This is man-db's dedicated GROFF_BIN_PATH formatter directory, consumed on every successful man format even without a pager."
+    }
+  ],
+  "failed_candidates_summary": {
+    "GCONV_PATH/LOCPATH/NLSPATH": "iconv RCE works but iconv not allowlisted; locale/file/git/true/pwd do not load gconv modules",
+    "OPENSSL_CONF/OPENSSL_ENGINES/OPENSSL_MODULES": "provider ctor fires on openssl version and curl (not allowlisted); git-remote-https uses GnuTLS; node -v/https and python3 --version do not load; python import ssl does (not allowlisted form)",
+    "GIT_ASKPASS/SSH_ASKPASS": "no fire on public HTTPS origin / connect-fail URLs without auth challenge",
+    "GIT_TRACE2_EVENT/PERF": "writes event log / rejects |command; no exec",
+    "GIT_EXTERNAL_DIFF/GIT_DIFF_OPTS/GIT_PAGER/PAGER/LESSOPEN/LESS": "EXTERNAL_DIFF already filed; pagers/LESSOPEN no-op under BashTool non-TTY",
+    "PYTHONSTARTUP/PYTHONPATH/PERL5OPT/RUBYOPT/JAVA_TOOL_OPTIONS/DOTNET_STARTUP_HOOKS/NODE_PATH": "only python3 --version / node -v allowlisted among these runtimes; those forms skip startup hooks",
+    "ENV (dash)": "fires only for interactive sh (-i); hooks use /bin/sh -c non-interactive; Claude Bash uses bash/zsh",
+    "IFS": "does not rewrite bash -c literal command text",
+    "DYLD_*": "macOS equivalent of filed LD_PRELOAD class; code comments already group with LD_*; no new distinct chain",
+    "CURL_HOME/WGETRC/NPM_CONFIG_USERCONFIG/PIP_INDEX_URL": "git libcurl did not load CURL_HOME/.curlrc; wget/npm/pip not allowlisted",
+    "MANPAGER/TROFF/NROFF env": "MANPAGER non-TTY no-op; TROFF/NROFF env alone did not replace formatter when tested against man-db 2.12 (GROFF_BIN_PATH did)"
+  }
+}
