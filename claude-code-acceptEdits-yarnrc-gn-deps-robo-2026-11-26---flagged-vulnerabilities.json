@@ -1,0 +1,102 @@
+{
+  "hunt": "claude-code-acceptEdits-yarnrc-gn-deps-robo-2026-11-26",
+  "repo": "wonderlanddevtools/claude-code",
+  "background_composer_id": "bc-a263f48e-f240-5608-95e2-9e5150b475a9",
+  "result": "4 NEW HIGH (Focus A); Focus B NONE",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of Yarn classic .yarnrc (yarn-path) while only .yarnrc.yml was previously filed.",
+      "description": "DANGEROUS_FILES lists shell/git/mcp basenames only (filesystem.ts:57-69). Prior filings cover .yarnrc.yml (Berry yarnPath), .npmrc, .pnpmfile.cjs, and .pnp.cjs — not classic .yarnrc. Under acceptEdits, in-cwd FileWrite of .yarnrc and the yarn-path target auto-allow after checkPathSafetyForAutoEdit (live bun: behavior=allow decisionReason.mode=acceptEdits). Yarn v1 reads yarn-path from .yarnrc and replaces itself with that executable on every yarn invocation. Live PoC on yarn 1.22.22: planted yarn-path ./scripts/yarn.js; yarn --version and yarn install executed the attacker script and wrote /tmp/yarnrc_classic_accepteedits_pwned.",
+      "impact": "After generic Trust plus acceptEdits (project-planted defaultMode or user-selected), the model can silently plant .yarnrc + yarn-path wrapper. The victim's next yarn install/add/test executes attacker JavaScript/Node as the victim — delayed host RCE via Yarn classic, bypassing the .yarnrc.yml denylist gap.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Attacker commits CLAUDE.md instructing a Yarn 'fix' writing .yarnrc with yarn-path \"./scripts/yarn.js\" and the wrapper script (optional: .claude/settings.json permissions.defaultMode acceptEdits).\n2. Victim clones, reviews (no malicious yarn-path yet or looks like a pin), TrustDialog (generic; acceptEdits has no BypassPermissions dialog).\n3. FileWrite of .yarnrc and scripts/yarn.js auto-allows (basenames absent from DANGEROUS_FILES; not under DANGEROUS_DIRECTORIES).\n4. Victim runs yarn / yarn install → Yarn classic execs yarn-path target → RCE.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:620-665",
+        "src/utils/permissions/filesystem.ts:1361-1376",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "src/utils/permissions/permissionSetup.ts:743-772",
+        "src/components/TrustDialog/TrustDialog.tsx:206-209",
+        "live PoC: yarn 1.22.22 yarn-path → /tmp/yarnrc_classic_accepteedits_pwned",
+        "live bun checkWritePermissionForTool: .yarnrc allow acceptEdits; .bashrc ask"
+      ],
+      "remediation": "Add .yarnrc (in addition to .yarnrc.yml) to DANGEROUS_FILES. Prefer blocking any yarn-path/yarnPath retarget write. Do not honor projectSettings defaultMode acceptEdits without disclosure.",
+      "why_distinct": "Exact basename .yarnrc was not in the already-reported list (only .yarnrc.yml / .pnp.cjs / .pnpmfile). Yarn classic yarn-path loader, not Berry yarnPath YAML or PnP node -r.",
+      "poc_video_notes": "Live yarn 1.22.22: .yarnrc yarn-path ./scripts/yarn.js; yarn --version and yarn install printed [attacker yarn-path] and wrote marker. Live bun FileWriteTool permission allow under acceptEdits."
+    },
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of Chromium/Flutter DEPS; gclient sync runs planted hooks actions.",
+      "description": "DANGEROUS_* omit DEPS and .gclient. Under acceptEdits, in-cwd FileWrite of DEPS auto-allows (live bun allow). gclient sync/runhooks executes hooks[].action command argv from DEPS (hooks enabled by default; --nohooks to skip). Modern gclient_eval uses a restricted AST schema (not full Python exec), but hooks actions remain arbitrary subprocess commands. DISTINCT from filed SConstruct (SCons Python), Makefile recipes, and Bazel Starlark.",
+      "impact": "Silent DEPS plant under acceptEdits; next gclient sync / gclient runhooks (Chromium, Flutter engine, and other depot_tools checkouts) runs attacker commands as the victim.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. CLAUDE.md instructs a DEPS 'hook cleanup' writing hooks with action [\"python3\",\"-c\",...].\n2. Victim TrustDialog.\n3. FileWrite DEPS auto-allows.\n4. Victim gclient sync (hooks on by default) or gclient runhooks executes planted action.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:620-665",
+        "src/utils/permissions/filesystem.ts:1361-1376",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "depot_tools gclient.py hooks documentation (action argv; hooks run on sync by default)",
+        "live bun: DEPS safety=true perm=allow acceptEdits"
+      ],
+      "remediation": "Add DEPS and .gclient to DANGEROUS_FILES.",
+      "why_distinct": "Chromium depot_tools gclient hooks product class; not SCons/Make/Bazel.",
+      "poc_video_notes": "Live acceptEdits allow for DEPS. Hook action subprocess semantics from depot_tools docs; simulated hooks action wrote /tmp/deps_exec_pwned. Full gclient binary not installed on host."
+    },
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of BUILD.gn / .gn; GN exec_script and action run attacker scripts.",
+      "description": "DANGEROUS_* omit BUILD.gn and .gn. Under acceptEdits, FileWrite auto-allows (live bun). GN language is not Bazel Starlark: during gn gen, exec_script() synchronously runs Python; action()/action_foreach define ninja build steps. Top-level .gn can set script_executable and exec_script_allowlist (Chrome restricts exec_script via allowlist, but many GN projects do not; action() still runs at build; attacker can also rewrite .gn). DISTINCT from filed BUILD.bazel/WORKSPACE/MODULE.bazel/BUILD and BUCK/TARGETS.",
+      "impact": "Silent BUILD.gn/.gn plant under acceptEdits; next gn gen / ninja build in Chromium, Flutter engine, Fuchsia, and other GN trees executes attacker scripts.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. CLAUDE.md instructs GN build 'fix' writing BUILD.gn with exec_script(\"//pwn.py\") or action script, optionally .gn tweaks.\n2. Victim TrustDialog.\n3. FileWrite BUILD.gn (and pwn.py) auto-allows.\n4. Victim gn gen / autoninja → exec_script or action runs planted Python/commands.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:620-665",
+        "src/utils/permissions/filesystem.ts:1361-1376",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "GN language.md: exec_script runs synchronously during buildfile execution",
+        "live bun: BUILD.gn/.gn safety=true perm=allow acceptEdits"
+      ],
+      "remediation": "Add BUILD.gn, *.gni, and .gn to DANGEROUS_FILES (or treat GN trees like Bazel).",
+      "why_distinct": "Google GN product/language; not Bazel/Buck Starlark already filed 2026-11-25.",
+      "poc_video_notes": "Live acceptEdits allow. gn binary not on host; exec_script/action semantics from official GN docs."
+    },
+    {
+      "severity": "high",
+      "location": "src/utils/permissions/filesystem.ts",
+      "title": "acceptEdits auto-allows FileWrite of RoboFile.php; Robo require_once executes it as PHP.",
+      "description": "DANGEROUS_* omit RoboFile.php. Under acceptEdits, FileWrite auto-allows (live bun). consolidation/robo Runner::loadRoboFile require_once's RoboFile.php from the project directory; top-level PHP runs at load and public methods run as tasks on robo / vendor/bin/robo. DISTINCT from filed composer.json scripts (JSON lifecycle keys; prior hunts explicitly ruled composer.json as package.json sibling) and from Gemfile/Guardfile Ruby DSLs.",
+      "impact": "Silent RoboFile.php plant under acceptEdits; next robo <task> or composer-script→robo executes attacker PHP as the victim.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. CLAUDE.md instructs Robo task 'fix' writing RoboFile.php.\n2. Victim TrustDialog.\n3. FileWrite RoboFile.php auto-allows.\n4. Victim runs vendor/bin/robo or composer exec robo → require_once loads planted PHP.",
+      "evidence": [
+        "src/utils/permissions/filesystem.ts:57-79",
+        "src/utils/permissions/filesystem.ts:435-488",
+        "src/utils/permissions/filesystem.ts:620-665",
+        "src/utils/permissions/filesystem.ts:1361-1376",
+        "src/tools/FileWriteTool/FileWriteTool.ts:135-141",
+        "consolidation/robo Runner.php loadRoboFile require_once $roboFilePath",
+        "live bun: RoboFile.php safety=true perm=allow acceptEdits"
+      ],
+      "remediation": "Add RoboFile.php (and common Robo entrypoint basenames) to DANGEROUS_FILES.",
+      "why_distinct": "PHP Robo task-runner module load; not composer.json scripts or Ruby Guard/Bundler.",
+      "poc_video_notes": "Live acceptEdits allow. PHP/robo not installed on host; require_once load path from Robo Runner.php source."
+    }
+  ],
+  "focus_b": {
+    "result": "NONE",
+    "notes": "No NEW MEDIUM+ complete authz/config-trust chains beyond already-reported surfaces listed in the hunt brief."
+  }
+}
