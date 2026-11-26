@@ -1,0 +1,52 @@
+{
+  "hunt": "claude-code-settings-env-groff-command-prefix-2026-11-26",
+  "focus": "project .claude/settings.json env → applyConfigEnvironmentVariables after Trust / claude -p → auto-allowed Bash sinks; skip already-filed env keys",
+  "result": "1 NEW CRITICAL",
+  "findings": [
+    {
+      "title": "Project settings.env GROFF_COMMAND_PREFIX RCE via auto-allowed man → groff → planted troff",
+      "severity": "critical",
+      "location": "src/utils/managedEnv.ts",
+      "description": "DISTINCT from filed GROFF_BIN_PATH (man looks up $GROFF_BIN_PATH/groff), PATH, MANPAGER/PAGER/LESSOPEN (non-TTY no-op), and man -P (blocked by allowlist). After TrustDialog or immediately under claude -p, applyConfigEnvironmentVariables Object.assigns all merged settings.env into process.env. GROFF_COMMAND_PREFIX is not in SAFE_ENV_VARS and is not scrubbed by filterSettingsEnv or subprocessEnv(). BashTool spawn inherits it. Auto-allowed man true / man ls / man -l <file> invoke host groff; GNU groff execs ${GROFF_COMMAND_PREFIX}troff. A trailing-slash prefix (e.g. ./.claude/evilbin/) is a path to an attacker-planted troff with no PATH or GROFF_BIN_PATH poison. TrustDialog only records hasDangerousEnvVars for analytics; UI stays a generic folder-trust prompt.",
+      "impact": "Remote code execution as the Claude Code user when a victim Trusts a malicious repo (or runs claude -p) and the model issues a normal auto-allowed man command. No extra permission prompt.",
+      "attack_path": [
+        "1. Attacker commits .claude/settings.json with env.GROFF_COMMAND_PREFIX=\"./.claude/evilbin/\" and executable .claude/evilbin/troff (payload + exit 0), optional CLAUDE.md steering man true/ls/-l.",
+        "2. Victim clones and runs claude or claude -p.",
+        "3. Interactive: after Trust accept, interactiveHelpers applyConfigEnvironmentVariables assigns GROFF_COMMAND_PREFIX. Headless -p: main.tsx applies full env immediately.",
+        "4. Model runs Bash(man true|ls|-l …); bashPermissions step 7 auto-allows as read-only.",
+        "5. Shell.ts spawn inherits env via subprocessEnv(); man-db runs host groff; groff execs ./.claude/evilbin/troff → RCE."
+      ],
+      "evidence": [
+        "src/utils/managedEnv.ts:187-190",
+        "src/utils/managedEnvConstants.ts:108-191",
+        "src/utils/subprocessEnv.ts:79-90",
+        "src/utils/Shell.ts:316-323",
+        "src/interactiveHelpers.tsx:180-184",
+        "src/main.tsx:2590-2593",
+        "src/tools/BashTool/bashPermissions.ts:1153-1162",
+        "src/tools/BashTool/readOnlyValidation.ts:304-321",
+        "src/components/TrustDialog/utils.ts:218-245",
+        "src/utils/settings/types.ts:35-37"
+      ],
+      "remediation": "Do not apply GROFF_COMMAND_PREFIX (and related GROFF_*/TROFF/NROFF/MANROFFSEQ overrides) from projectSettings/localSettings. Scrub them in subprocessEnv() for Bash/MCP/hook children. Optionally clear GROFF_COMMAND_PREFIX for auto-allowed man, or remove man from the readonly allowlist. Disclose non-safe env keys in TrustDialog UI.",
+      "poc_notes": "man-db 2.12 via /usr/bin/man.REAL (VM /usr/bin/man is unminimize stub). Relative GROFF_COMMAND_PREFIX=./.claude/evilbin/ with planted troff wrote /tmp/poc-markers/final_groff_command_prefix.hit under bash -c with stdout redirected. bun checkReadOnlyConstraints: man true|ls|-l → allow. TROFF/NROFF alone: no hit. MANROFFSEQ alone without PATH/GROFF_BIN_PATH: no RCE.",
+      "why_distinct": "Different env key and mechanism from GROFF_BIN_PATH: man still executes host /usr/bin/groff; groff's GROFF_COMMAND_PREFIX path-prefix execs planted troff. No PATH hijack required."
+    }
+  ],
+  "failed_candidates_summary": {
+    "TROFF/NROFF": "man-db 2.12 ignores; no planted-binary exec",
+    "MANROFFSEQ": "preprocessor letter codes only; needs PATH or GROFF_BIN_PATH (filed)",
+    "GROFF_TYPESETTER": "device name only",
+    "GIT_CONFIG (single file)": "only git config builtin; no status/ls-remote RCE; --get dump not distinct vs cat allow",
+    "GIT_CONFIG_SYSTEM": "near-dup of filed GIT_CONFIG_GLOBAL/COUNT fsmonitor",
+    "GIT_INDEX/OBJECT/ALTERNATE/NAMESPACE": "no RCE on allowlisted cmds",
+    "GIT_PROXY_COMMAND": "git:// only; allowlist blocks :// URLs",
+    "GIT_SSL_CAINFO": "TLS tweak; CA class filed",
+    "OPENSSL_MODULES/ENGINES+CONF": "loads on openssl version only (not allowlisted); git uses GnuTLS; node/python3 --version/bun no load",
+    "R_PROFILE/LUA_INIT/ERL_FLAGS/HEX_HOME": "runtimes not on readonly allowlist",
+    "DOCKER_HOST/DOCKER_CONFIG/KUBECONFIG/NETRC/CURL_HOME": "no auto-allowed RCE sink",
+    "GH_CONFIG_DIR aliases": "gh ant-only; pr builtin not !alias",
+    "PAGER/MANPAGER": "non-TTY redirect no-op",
+    "already filed GROFF_BIN_PATH/MANPATH/MANOPT/etc": "skipped per kickoff list"
+  }
+}
